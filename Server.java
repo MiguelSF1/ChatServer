@@ -50,7 +50,12 @@ public class Server {
 
                         try {
                             socketChannel = (SocketChannel) selectedKey.channel();
-                            boolean connectionState = processInput(socketChannel);
+                            boolean connectionState;
+                            if (selectedKey.attachment() == null) {
+                                connectionState = processNick(socketChannel, selectedKey);
+                            } else {
+                                connectionState = processInput(socketChannel, (String) selectedKey.attachment());
+                            }
 
                             if (!connectionState) {
                                 selectedKey.cancel();
@@ -86,7 +91,29 @@ public class Server {
         }
     }
 
-    private static boolean processInput(SocketChannel socketChannel) throws IOException {
+    private static boolean processInput(SocketChannel socketChannel, String nick) throws IOException {
+        receivedBuffer.clear();
+        socketChannel.read(receivedBuffer);
+        receivedBuffer.flip();
+
+
+        if (receivedBuffer.limit() == 0) {
+            return false;
+        }
+
+        String message = nick  + ": " + charsetDecoder.decode(receivedBuffer);
+
+        for (SocketChannel client : connectedClients) {
+            receivedBuffer.clear();
+            receivedBuffer.put(charset.encode(message));
+            receivedBuffer.flip();
+            client.write(receivedBuffer);
+        }
+
+        return true;
+    }
+
+    private static boolean processNick(SocketChannel socketChannel, SelectionKey selectedKey) throws IOException {
         receivedBuffer.clear();
         socketChannel.read(receivedBuffer);
         receivedBuffer.flip();
@@ -95,15 +122,9 @@ public class Server {
             return false;
         }
 
-        String message = charsetDecoder.decode(receivedBuffer).toString();
-
-        for (SocketChannel client : connectedClients) {
-            System.out.println(client.socket().getRemoteSocketAddress());
-            receivedBuffer.clear();
-            receivedBuffer.put(charset.encode(message));
-            receivedBuffer.flip();
-            client.write(receivedBuffer);
-        }
+        String nick = charsetDecoder.decode(receivedBuffer).toString();
+        nick = nick.replace("\r", "").replace("\n", "");
+        selectedKey.attach(nick);
 
         return true;
     }
