@@ -6,10 +6,12 @@ import java.nio.charset.*;
 import java.util.*;
 
 public class ChatServer {
-    private static final ByteBuffer receivedBuffer = ByteBuffer.allocate(16384);
+    private static final ByteBuffer receiveBuffer = ByteBuffer.allocate(16384);
+    private static final ByteBuffer sendBuffer = ByteBuffer.allocate(16384);
     private static final Charset charset = StandardCharsets.UTF_8;
     private static final CharsetDecoder charsetDecoder = charset.newDecoder();
     private static final ArrayList<Client> connectedClients = new ArrayList<>();
+    private static final ArrayList<Room> rooms = new ArrayList<>();
 
     public static void main(String[] args) {
         int port = Integer.parseInt(args[0]);
@@ -50,13 +52,8 @@ public class ChatServer {
 
                         try {
                             socketChannel = (SocketChannel) selectedKey.channel();
-                            boolean connectionState;
                             int clientIdx = getClientIndex(socketChannel);
-                            if (connectedClients.get(clientIdx).getNick() == null) {
-                                connectionState = processNick(clientIdx);
-                            } else {
-                                connectionState = processInput(clientIdx);
-                            }
+                            boolean connectionState = processInput(clientIdx);
 
                             if (!connectionState) {
                                 selectedKey.cancel();
@@ -75,7 +72,7 @@ public class ChatServer {
 
                             try {
                                 socketChannel.close();
-                                connectedClients.remove(getClientIndex(socketChannel));
+                                connectedClients.remove(getClientIndex(socketChannel)); // ??
                             } catch (IOException ex) {
                                 System.err.println("Error: " + ex);
                             }
@@ -93,45 +90,220 @@ public class ChatServer {
     }
 
     private static boolean processInput(int clientIdx) throws IOException {
-        receivedBuffer.clear();
-        connectedClients.get(clientIdx).getSocketChannel().read(receivedBuffer);
-        receivedBuffer.flip();
+        receiveBuffer.clear();
+        connectedClients.get(clientIdx).getSocketChannel().read(receiveBuffer);
+        receiveBuffer.flip();
 
-        if (receivedBuffer.limit() == 0) {
+        // remove closing connection on empty input
+        if (receiveBuffer.limit() == 0) {
             return false;
         }
 
-        // deal with input
+        String input = charsetDecoder.decode(receiveBuffer).toString();
+        input = input.replace("\r", "").replace("\n", "");
 
-        String message = connectedClients.get(clientIdx).getNick()  + ": " + charsetDecoder.decode(receivedBuffer);
-
-        for (Client client : connectedClients) {
-            receivedBuffer.clear();
-            receivedBuffer.put(charset.encode(message));
-            receivedBuffer.flip();
-            while (receivedBuffer.hasRemaining()) {
-                client.getSocketChannel().write(receivedBuffer);
+        if (input.charAt(0) == '/') {
+            if (input.length() > 1 && input.charAt(1) == '/') {
+                String message = input.substring(1);
+                processMessage(clientIdx, message);
+            } else {
+                String command = input.split(" ")[0];
+                if (command.equals("/nick")) {
+                    processNick(clientIdx, input);
+                } else if (command.equals("/join")) {
+                    processJoin(clientIdx, input);
+                } else if (command.equals("/leave")) {
+                    processLeave(clientIdx, input);
+                } else if (command.equals("/bye")) {
+                    processBye(clientIdx, input);
+                } else {
+                    sendError(clientIdx);
+                }
             }
+        } else {
+            processMessage(clientIdx, input);
         }
 
         return true;
     }
 
-    private static boolean processNick(int clientIdx) throws IOException {
-        receivedBuffer.clear();
-        connectedClients.get(clientIdx).getSocketChannel().read(receivedBuffer);
-        receivedBuffer.flip();
-
-        if (receivedBuffer.limit() == 0) {
-            return false;
+    private static void processNick(int clientIdx, String input) throws IOException {
+        String[] args = input.split(" ");
+        if (args.length != 2) {
+            sendError(clientIdx);
+            return;
         }
 
-        String nick = charsetDecoder.decode(receivedBuffer).toString();
-        nick = nick.replace("\r", "").replace("\n", "");
 
-        connectedClients.get(clientIdx).setNick(nick);
+        if (!connectedClients.isEmpty()) {
+            for (Client client : connectedClients) {
+                if (client.getNick().equals(args[1])) {
+                    sendError(clientIdx);
+                    return;
+                }
+            }
+        }
 
-        return true;
+
+        String oldNick = "";
+        if (!connectedClients.get(clientIdx).getState().equals("init")) {
+            oldNick = connectedClients.get(clientIdx).getNick();
+        }
+
+
+        connectedClients.get(clientIdx).setNick(args[1]);
+        if (connectedClients.get(clientIdx).getState().equals("init")) {
+            connectedClients.get(clientIdx).setState("outside");
+        }
+
+        sendOk(clientIdx);
+
+        if (connectedClients.get(clientIdx).getState().equals("inside")) {
+            ArrayList<Client> roomClients = rooms.get(getRoomIndex(connectedClients.get(clientIdx).getRoom())).getClients();
+            String message = "NEWNICK " + oldNick + " " + connectedClients.get(clientIdx).getNick();
+            for (Client client : roomClients) {
+                if (!client.getNick().equals(connectedClients.get(clientIdx).getNick())) {
+                    sendMessage(message, client.getSocketChannel());
+                }
+            }
+        }
+    }
+
+    private static void processJoin(int clientIdx, String input) throws IOException {
+        if (connectedClients.get(clientIdx).getState().equals("init")) {
+            sendError(clientIdx);
+            return;
+        }
+
+        String[] args = input.split(" ");
+        if (args.length != 2) {
+            sendError(clientIdx);
+            return;
+        }
+
+        String oldRoom = connectedClients.get(clientIdx).getRoom();
+
+        int roomIdx = getRoomIndex(args[1]);
+        if (roomIdx == -1) {
+            Room createdRoom = new Room(args[1]);
+            createdRoom.joinRoom(connectedClients.get(clientIdx));
+            rooms.add(createdRoom);
+            connectedClients.get(clientIdx).setRoom(args[1]);
+            sendOk(clientIdx);
+        } else {
+            rooms.get(roomIdx).joinRoom(connectedClients.get(clientIdx));
+            connectedClients.get(clientIdx).setRoom(args[1]);
+            sendOk(clientIdx);
+            String message = "JOINED " + connectedClients.get(clientIdx).getNick();
+            for (Client client : rooms.get(roomIdx).getClients()) {
+                if (!client.getNick().equals(connectedClients.get(clientIdx).getNick())) {
+                    sendMessage(message, client.getSocketChannel());
+                }
+            }
+        }
+
+        if (connectedClients.get(clientIdx).getState().equals("inside")) {
+            String message = "LEFT " + connectedClients.get(clientIdx).getNick();
+            rooms.get(getRoomIndex(oldRoom)).leaveRoom(connectedClients.get(clientIdx));
+            for (Client client : rooms.get(getRoomIndex(oldRoom)).getClients()) {
+                sendMessage(message, client.getSocketChannel());
+            }
+        } else {
+            connectedClients.get(clientIdx).setState("inside");
+        }
+    }
+
+    private static void processLeave(int clientIdx, String input) throws IOException {
+        if (!connectedClients.get(clientIdx).getState().equals("inside")) {
+            sendError(clientIdx);
+            return;
+        }
+
+        String[] args = input.split(" ");
+        if (args.length != 1) {
+            sendError(clientIdx);
+            return;
+        }
+
+        String roomName = connectedClients.get(clientIdx).getRoom();
+        rooms.get(getRoomIndex(roomName)).leaveRoom(connectedClients.get(clientIdx));
+        connectedClients.get(clientIdx).setRoom(" ");
+        sendOk(clientIdx);
+
+        String message = "LEFT " + connectedClients.get(clientIdx).getNick();
+        for (Client client : rooms.get(getRoomIndex(roomName)).getClients()) {
+            sendMessage(message, client.getSocketChannel());
+        }
+
+        connectedClients.get(clientIdx).setState("outside");
+    }
+
+    private static void processBye(int clientIdx, String input) throws IOException {
+        String[] args = input.split(" ");
+        if (args.length != 1) {
+            sendError(clientIdx);
+            return;
+        }
+
+        Client client = connectedClients.get(clientIdx);
+        connectedClients.remove(clientIdx);
+        String message = "BYE";
+        sendMessage(message, client.getSocketChannel());
+        if (client.getState().equals("inside")) {
+            String roomName = client.getRoom();
+            rooms.remove(getRoomIndex(roomName));
+            Room room = rooms.get(getRoomIndex(roomName));
+            message = "LEFT " + client.getNick();
+            for (Client c : room.getClients()) {
+                sendMessage(message, c.getSocketChannel());
+            }
+        }
+
+        // ??
+        Socket socket = client.getSocketChannel().socket();
+        System.out.println("Closing connection to " + socket);
+        socket.close();
+    }
+
+    private static void processMessage(int clientIdx, String input) throws IOException {
+        if (!connectedClients.get(clientIdx).getState().equals("inside")) {
+            sendError(clientIdx);
+            return;
+        }
+
+        String roomName = connectedClients.get(clientIdx).getRoom();
+        Room room = rooms.get(getRoomIndex(roomName));
+        String message = "MESSAGE " + connectedClients.get(clientIdx).getNick() + " " + input;
+        for (Client client : room.getClients()) {
+            sendMessage(message, client.getSocketChannel());
+        }
+    }
+
+    private static void sendError(int clientIdx) throws IOException {
+        sendBuffer.clear();
+        sendBuffer.put(charset.encode("ERROR\n"));
+        sendBuffer.flip();
+        while (sendBuffer.hasRemaining()) {
+            connectedClients.get(clientIdx).getSocketChannel().write(sendBuffer);
+        }
+    }
+
+    private static void sendOk(int clientIdx) throws IOException {
+        sendBuffer.clear();
+        sendBuffer.put(charset.encode("OK\n"));
+        sendBuffer.flip();
+        while (sendBuffer.hasRemaining()) {
+            connectedClients.get(clientIdx).getSocketChannel().write(sendBuffer);
+        }
+    }
+
+    private static void sendMessage(String message, SocketChannel socketChannel) throws IOException {
+        sendBuffer.clear();
+        sendBuffer.put(charset.encode(message + "\n"));
+        sendBuffer.flip();
+        while (sendBuffer.hasRemaining()) {
+            socketChannel.write(sendBuffer);
+        }
     }
 
     private static int getClientIndex(SocketChannel socketChannel) {
@@ -142,6 +314,15 @@ public class ChatServer {
         }
 
          return -1;
+    }
+
+    private static int getRoomIndex(String name) {
+        for (int i = 0; i < rooms.size(); i++) {
+            if (rooms.get(i).getName().equals(name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 }
 

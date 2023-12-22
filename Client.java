@@ -4,11 +4,12 @@ public class Client {
     private final SocketChannel socketChannel;
     private String nick;
     private String state;
+    private String room;
 
     public Client(SocketChannel socketChannel) {
         this.socketChannel = socketChannel;
         state = "init";
-        nick = null;
+        nick = " ";
     }
 
     public SocketChannel getSocketChannel() {
@@ -23,6 +24,10 @@ public class Client {
         return state;
     }
 
+    public String getRoom() {
+        return room;
+    }
+
     public void setState(String state) {
         this.state = state;
     }
@@ -30,4 +35,9 @@ public class Client {
     public void setNick(String nick) {
         this.nick = nick;
     }
+
+    public void setRoom(String room) {
+        this.room = room;
+    }
 }
+
