@@ -116,6 +116,8 @@ public class ChatServer {
                     processLeave(clientIdx, input);
                 } else if (command.equals("/bye")) {
                     processBye(clientIdx, input);
+                } else if (command.equals("/priv")) {
+                    processPriv(clientIdx, input);
                 } else {
                     sendError(clientIdx);
                 }
@@ -263,6 +265,38 @@ public class ChatServer {
         Socket socket = client.getSocketChannel().socket();
         System.out.println("Closing connection to " + socket);
         socket.close();
+    }
+
+    private static void processPriv(int clientIdx, String input) throws IOException {
+        String[] args = input.split(" ");
+        if (args.length != 3){
+            sendError(clientIdx);
+            return;
+        }
+
+        if (connectedClients.get(clientIdx).getState().equals("init")) {
+            sendError(clientIdx);
+            return;
+        }
+
+        Client receiverClient = null;
+        for (Client client : connectedClients) {
+            if (client.getNick().equals(args[1])) {
+                receiverClient = client;
+                break;
+            }
+        }
+
+        if (receiverClient == null) {
+            sendError(clientIdx);
+            return;
+        }
+
+        sendOk(clientIdx);
+
+        int messageStartIndex = args[0].length() + args[1].length() + 2;
+        String message = "PRIVATE " + connectedClients.get(clientIdx).getNick() + " " + input.substring(messageStartIndex);
+        sendMessage(message, receiverClient.getSocketChannel());
     }
 
     private static void processMessage(int clientIdx, String input) throws IOException {
