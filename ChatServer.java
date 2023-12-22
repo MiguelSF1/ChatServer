@@ -251,8 +251,8 @@ public class ChatServer {
         sendMessage(message, client.getSocketChannel());
         if (client.getState().equals("inside")) {
             String roomName = client.getRoom();
-            rooms.remove(getRoomIndex(roomName));
             Room room = rooms.get(getRoomIndex(roomName));
+            room.getClients().remove(client);
             message = "LEFT " + client.getNick();
             for (Client c : room.getClients()) {
                 sendMessage(message, c.getSocketChannel());
