@@ -72,7 +72,7 @@ public class ChatServer {
 
                             try {
                                 socketChannel.close();
-                                connectedClients.remove(getClientIndex(socketChannel)); // ??
+                                connectedClients.remove(getClientIndex(socketChannel));
                             } catch (IOException ex) {
                                 System.err.println("Error: " + ex);
                             }
@@ -94,7 +94,6 @@ public class ChatServer {
         connectedClients.get(clientIdx).getSocketChannel().read(receiveBuffer);
         receiveBuffer.flip();
 
-        // remove closing connection on empty input
         if (receiveBuffer.limit() == 0) {
             return false;
         }
@@ -261,7 +260,6 @@ public class ChatServer {
             }
         }
 
-        // ??
         Socket socket = client.getSocketChannel().socket();
         System.out.println("Closing connection to " + socket);
         socket.close();
