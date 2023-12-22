@@ -5,11 +5,11 @@ import java.nio.channels.*;
 import java.nio.charset.*;
 import java.util.*;
 
-public class Server {
+public class ChatServer {
     private static final ByteBuffer receivedBuffer = ByteBuffer.allocate(16384);
     private static final Charset charset = StandardCharsets.UTF_8;
     private static final CharsetDecoder charsetDecoder = charset.newDecoder();
-    private static final ArrayList<SocketChannel> connectedClients = new ArrayList<>();
+    private static final ArrayList<Client> connectedClients = new ArrayList<>();
 
     public static void main(String[] args) {
         int port = Integer.parseInt(args[0]);
@@ -44,17 +44,18 @@ public class Server {
                         acceptedSocketChannel.configureBlocking(false);
 
                         acceptedSocketChannel.register(selector, SelectionKey.OP_READ);
-                        connectedClients.add(acceptedSocketChannel);
+                        connectedClients.add(new Client(acceptedSocketChannel));
                     } else if (selectedKey.isReadable()) {
                         SocketChannel socketChannel = null;
 
                         try {
                             socketChannel = (SocketChannel) selectedKey.channel();
                             boolean connectionState;
-                            if (selectedKey.attachment() == null) {
-                                connectionState = processNick(socketChannel, selectedKey);
+                            int clientIdx = getClientIndex(socketChannel);
+                            if (connectedClients.get(clientIdx).getNick() == null) {
+                                connectionState = processNick(clientIdx);
                             } else {
-                                connectionState = processInput(socketChannel, (String) selectedKey.attachment());
+                                connectionState = processInput(clientIdx);
                             }
 
                             if (!connectionState) {
@@ -74,7 +75,7 @@ public class Server {
 
                             try {
                                 socketChannel.close();
-                                connectedClients.remove(socketChannel);
+                                connectedClients.remove(getClientIndex(socketChannel));
                             } catch (IOException ex) {
                                 System.err.println("Error: " + ex);
                             }
@@ -91,31 +92,34 @@ public class Server {
         }
     }
 
-    private static boolean processInput(SocketChannel socketChannel, String nick) throws IOException {
+    private static boolean processInput(int clientIdx) throws IOException {
         receivedBuffer.clear();
-        socketChannel.read(receivedBuffer);
+        connectedClients.get(clientIdx).getSocketChannel().read(receivedBuffer);
         receivedBuffer.flip();
-
 
         if (receivedBuffer.limit() == 0) {
             return false;
         }
 
-        String message = nick  + ": " + charsetDecoder.decode(receivedBuffer);
+        // deal with input
 
-        for (SocketChannel client : connectedClients) {
+        String message = connectedClients.get(clientIdx).getNick()  + ": " + charsetDecoder.decode(receivedBuffer);
+
+        for (Client client : connectedClients) {
             receivedBuffer.clear();
             receivedBuffer.put(charset.encode(message));
             receivedBuffer.flip();
-            client.write(receivedBuffer);
+            while (receivedBuffer.hasRemaining()) {
+                client.getSocketChannel().write(receivedBuffer);
+            }
         }
 
         return true;
     }
 
-    private static boolean processNick(SocketChannel socketChannel, SelectionKey selectedKey) throws IOException {
+    private static boolean processNick(int clientIdx) throws IOException {
         receivedBuffer.clear();
-        socketChannel.read(receivedBuffer);
+        connectedClients.get(clientIdx).getSocketChannel().read(receivedBuffer);
         receivedBuffer.flip();
 
         if (receivedBuffer.limit() == 0) {
@@ -124,9 +128,20 @@ public class Server {
 
         String nick = charsetDecoder.decode(receivedBuffer).toString();
         nick = nick.replace("\r", "").replace("\n", "");
-        selectedKey.attach(nick);
+
+        connectedClients.get(clientIdx).setNick(nick);
 
         return true;
+    }
+
+    private static int getClientIndex(SocketChannel socketChannel) {
+        for (int i = 0; i < connectedClients.size(); i++) {
+            if (connectedClients.get(i).getSocketChannel() == socketChannel) {
+                return i;
+            }
+        }
+
+         return -1;
     }
 }
 
