@@ -5,11 +5,13 @@ public class Client {
     private String nick;
     private String state;
     private String room;
+    private String curMessage;
 
     public Client(SocketChannel socketChannel) {
         this.socketChannel = socketChannel;
         state = "init";
         nick = " ";
+        curMessage = "";
     }
 
     public SocketChannel getSocketChannel() {
@@ -28,6 +30,10 @@ public class Client {
         return room;
     }
 
+    public String getCurMessage() {
+        return curMessage;
+    }
+
     public void setState(String state) {
         this.state = state;
     }
@@ -38,6 +44,10 @@ public class Client {
 
     public void setRoom(String room) {
         this.room = room;
+    }
+
+    public void setCurMessage(String curMessage) {
+        this.curMessage = curMessage;
     }
 }
 

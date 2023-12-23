@@ -61,6 +61,22 @@ public class ChatServer {
 
                                 try {
                                     socket = socketChannel.socket();
+
+                                    int removedClientIdx = getClientIndex(socketChannel);
+
+                                    if (connectedClients.get(removedClientIdx).getState().equals("inside")) {
+                                        String oldRoom = connectedClients.get(removedClientIdx).getRoom();
+                                        String message = "LEFT " + connectedClients.get(removedClientIdx).getNick();
+
+                                        rooms.get(getRoomIndex(oldRoom)).leaveRoom(connectedClients.get(removedClientIdx));
+
+                                        for (Client client : rooms.get(getRoomIndex(oldRoom)).getClients()) {
+                                            sendMessage(message, client.getSocketChannel());
+                                        }
+                                    }
+
+                                    connectedClients.remove(removedClientIdx);
+
                                     System.out.println("Closing connection to " + socket);
                                     socket.close();
                                 } catch (IOException e) {
@@ -69,10 +85,9 @@ public class ChatServer {
                             }
                         } catch (IOException e) {
                             selectedKey.cancel();
-
                             try {
                                 socketChannel.close();
-                                connectedClients.remove(getClientIndex(socketChannel));
+
                             } catch (IOException ex) {
                                 System.err.println("Error: " + ex);
                             }
@@ -99,30 +114,44 @@ public class ChatServer {
         }
 
         String input = charsetDecoder.decode(receiveBuffer).toString();
-        input = input.replace("\r", "").replace("\n", "");
 
-        if (input.charAt(0) == '/') {
-            if (input.length() > 1 && input.charAt(1) == '/') {
-                String message = input.substring(1);
-                processMessage(clientIdx, message);
-            } else {
-                String command = input.split(" ")[0];
-                if (command.equals("/nick")) {
-                    processNick(clientIdx, input);
-                } else if (command.equals("/join")) {
-                    processJoin(clientIdx, input);
-                } else if (command.equals("/leave")) {
-                    processLeave(clientIdx, input);
-                } else if (command.equals("/bye")) {
-                    processBye(clientIdx, input);
-                } else if (command.equals("/priv")) {
-                    processPriv(clientIdx, input);
+        String curMessage = connectedClients.get(clientIdx).getCurMessage();
+        connectedClients.get(clientIdx).setCurMessage(curMessage + input);
+
+        if (!input.endsWith("\n")) {
+            return true;
+        }
+
+        input = connectedClients.get(clientIdx).getCurMessage();
+        connectedClients.get(clientIdx).setCurMessage("");
+
+        String[] inputs = input.split("\n");
+
+        for (int i = 0; i < inputs.length; i++) {
+            input = inputs[i];
+            if (input.charAt(0) == '/') {
+                if (input.length() > 1 && input.charAt(1) == '/') {
+                    String message = input.substring(1);
+                    processMessage(clientIdx, message);
                 } else {
-                    sendError(clientIdx);
+                    String command = input.split(" ")[0];
+                    if (command.equals("/nick")) {
+                        processNick(clientIdx, input);
+                    } else if (command.equals("/join")) {
+                        processJoin(clientIdx, input);
+                    } else if (command.equals("/leave")) {
+                        processLeave(clientIdx, input);
+                    } else if (command.equals("/bye")) {
+                        processBye(clientIdx, input);
+                    } else if (command.equals("/priv")) {
+                        processPriv(clientIdx, input);
+                    } else {
+                        sendError(clientIdx);
+                    }
                 }
+            } else {
+                processMessage(clientIdx, input);
             }
-        } else {
-            processMessage(clientIdx, input);
         }
 
         return true;
